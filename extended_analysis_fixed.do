@@ -844,8 +844,16 @@ gen cell_area_km2 = (`grid_size' * 111) * (`grid_size' * 111 * cos(latitude * _p
 label variable grid_cell "50km grid cell ID"
 label variable cell_area_km2 "Grid cell area (km^2)"
 
-quietly distinct grid_cell
-local n_grid_cells = r(ndistinct)
+* Count unique grid cells (use distinct if available, otherwise tabulate)
+capture quietly distinct grid_cell
+if _rc == 0 {
+    local n_grid_cells = r(ndistinct)
+}
+else {
+    * Fallback if distinct not installed
+    quietly tabulate grid_cell
+    local n_grid_cells = r(r)
+}
 display "Number of grid cells: `n_grid_cells'"
 
 /*------------------------------------------------------------------------------
@@ -1019,15 +1027,19 @@ display _newline
 display "6.1 HOTSPOT VS SCDi COMPARISON"
 display "────────────────────────────────────────────────────────────────"
 
-* Cross-tabulation
-tabulate hotspot scdi_type, chi2
+* Cross-tabulation (capture in case of insufficient cell counts for chi2)
+capture noisily tabulate hotspot scdi_type, chi2
+if _rc != 0 {
+    display "Chi-square test not available - showing basic tabulation:"
+    tabulate hotspot scdi_type, missing
+}
 
 * Correlation
 capture corr hotspot high_intensity clustered
 if _rc == 0 {
     display ""
     display "Your hotspot measure captures locations that are:"
-    tabulate scdi_type if hotspot == 1, missing
+    capture noisily tabulate scdi_type if hotspot == 1, missing
 }
 
 /*------------------------------------------------------------------------------
@@ -1041,10 +1053,21 @@ display "───────────────────────�
 * Correlation between burstiness and SCDi measures
 capture confirm variable burstiness_violence
 if _rc == 0 {
-    corr burstiness_violence conflict_intensity conflict_concentration
+    * Check that SCDi variables exist before correlating
+    capture confirm variable conflict_intensity
+    local has_ci = (_rc == 0)
+    capture confirm variable conflict_concentration
+    local has_cc = (_rc == 0)
 
-    * Average burstiness by SCDi type
-    tabstat burstiness_violence, by(scdi_type) stat(mean sd n)
+    if `has_ci' & `has_cc' {
+        capture noisily corr burstiness_violence conflict_intensity conflict_concentration
+
+        * Average burstiness by SCDi type
+        capture noisily tabstat burstiness_violence, by(scdi_type) stat(mean sd n)
+    }
+    else {
+        display "SCDi variables not available for correlation"
+    }
 }
 else {
     display "Burstiness variable not found - skipping"
@@ -1061,9 +1084,14 @@ display "───────────────────────�
 * Model with your hotspot
 quietly regress violence_t c.protest_lag1##i.hotspot violence_lag1_alt
 estimates store model_hotspot
-test 1.hotspot#c.protest_lag1
-local p_hotspot = r(p)
-display "Model with Hotspot: Interaction p = " %5.3f `p_hotspot'
+capture test 1.hotspot#c.protest_lag1
+if _rc == 0 {
+    local p_hotspot = r(p)
+    display "Model with Hotspot: Interaction p = " %5.3f `p_hotspot'
+}
+else {
+    display "Model with Hotspot: Interaction test not available"
+}
 
 * Model with SCDi high intensity
 capture {
@@ -1116,12 +1144,21 @@ display "   Original DV (violence_change) creates mechanical β ≈ -1"
 display "   Alternative specification (violence_t ~ violence_t-1) recommended"
 display ""
 display "2. MODEL DIAGNOSTICS:"
-display "   Overdispersion ratio: " %5.2f `v_dispersion'
-display "   Zero proportion: " %4.1f `pct_zeros' "%"
-display "   Spatial autocorrelation: " %5.3f `moran_approx'
+* Handle case where locals might not be set due to earlier errors
+if "`v_dispersion'" != "" {
+    display "   Overdispersion ratio: " %5.2f `v_dispersion'
+}
+if "`pct_zeros'" != "" {
+    display "   Zero proportion: " %4.1f `pct_zeros' "%"
+}
+if "`moran_approx'" != "" {
+    display "   Spatial autocorrelation: " %5.3f `moran_approx'
+}
 display ""
 display "3. SCDi IMPLEMENTATION:"
-display "   Grid cells created: `n_grid_cells'"
+if "`n_grid_cells'" != "" {
+    display "   Grid cells created: `n_grid_cells'"
+}
 display "   Conflict Intensity calculated (events/km^2)"
 display "   Conflict Concentration calculated (centroid-based)"
 display "   4-category typology created"
@@ -1133,11 +1170,17 @@ display "   $tables/robustness_lag_structures.csv"
 display "   $tables/hotspot_vs_scdi.csv"
 
 * Save enhanced dataset
-save "$merged/analysis_data_extended.dta", replace
-display ""
-display "✓ Extended analysis data saved: $merged/analysis_data_extended.dta"
+capture noisily save "$merged/analysis_data_extended.dta", replace
+if _rc == 0 {
+    display ""
+    display "✓ Extended analysis data saved: $merged/analysis_data_extended.dta"
+}
+else {
+    display ""
+    display "⚠ Warning: Could not save extended dataset (error " _rc ")"
+}
 
-log close
+capture log close
 
 /*==============================================================================
   END OF DO-FILE
