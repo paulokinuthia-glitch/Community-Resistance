@@ -639,34 +639,67 @@ foreach v in avg_violence_loc hotspot_strict hotspot_loose total_events hotspot_
 * Alternative 1: More restrictive (top 10% persistent)
 bysort panel_id: egen avg_violence_loc = mean(violence_t)
 quietly summarize avg_violence_loc, detail
-gen hotspot_strict = (avg_violence_loc >= r(p90))
+local p90_val = r(p90)
+gen hotspot_strict = (avg_violence_loc >= `p90_val')
 
 * Alternative 2: Less restrictive (top 33% persistent)
-gen hotspot_loose = (avg_violence_loc >= r(p67))
+* FIX: Use _pctile to get 67th percentile (summarize only stores p1,p5,p10,p25,p50,p75,p90,p95,p99)
+quietly _pctile avg_violence_loc, p(67)
+local p67_val = r(r1)
+gen hotspot_loose = (avg_violence_loc >= `p67_val')
 
 * Alternative 3: Based on event counts only
 bysort panel_id: egen total_events = total(violence_count)
 quietly summarize total_events, detail
-gen hotspot_events = (total_events >= r(p75))
+local p75_events = r(p75)
+gen hotspot_events = (total_events >= `p75_events')
 
 label variable hotspot_strict "Hotspot (top 10%)"
 label variable hotspot_loose "Hotspot (top 33%)"
 label variable hotspot_events "Hotspot (event count)"
 
-* Run models with each definition
+* Verify variation in each hotspot definition
+display "Checking variation in hotspot definitions:"
 foreach def in hotspot hotspot_strict hotspot_loose hotspot_events {
-    quietly regress violence_t c.protest_lag1##i.`def' violence_lag1_alt
-    estimates store rob_`def'
-
-    test 1.`def'#c.protest_lag1
-    display "`def' interaction p = " %5.3f r(p)
+    quietly summarize `def'
+    display "  `def': mean = " %5.3f r(mean) " (N=1: " %8.0f r(mean)*r(N) ")"
 }
 
-esttab rob_hotspot rob_hotspot_strict rob_hotspot_loose rob_hotspot_events ///
+* Run models with each definition
+foreach def in hotspot hotspot_strict hotspot_loose hotspot_events {
+    * Check if variable has variation before running regression
+    quietly summarize `def'
+    if r(sd) == 0 {
+        display "`def': No variation - skipping"
+        continue
+    }
+
+    capture quietly regress violence_t c.protest_lag1##i.`def' violence_lag1_alt
+    if _rc != 0 {
+        display "`def': Regression failed - skipping"
+        continue
+    }
+    estimates store rob_`def'
+
+    capture test 1.`def'#c.protest_lag1
+    if _rc == 0 {
+        display "`def' interaction p = " %5.3f r(p)
+    }
+    else {
+        display "`def': Interaction test not available"
+    }
+}
+
+* Export results (capture in case some models weren't estimated)
+capture noisily esttab rob_hotspot rob_hotspot_strict rob_hotspot_loose rob_hotspot_events ///
     using "$tables/robustness_hotspot_definitions.csv", replace ///
     b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
     mtitles("Baseline (2/3)" "Strict (10%)" "Loose (33%)" "Events") ///
     stats(N r2, fmt(0 3))
+
+if _rc != 0 {
+    display "Note: Some models could not be exported - check which estimates exist"
+}
 
 /*------------------------------------------------------------------------------
   4.2 Different Lag Structures
