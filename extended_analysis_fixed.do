@@ -53,6 +53,21 @@ display _newline
 
 set seed 20251208
 
+/*------------------------------------------------------------------------------
+  Initialize Word Document for All Tables
+------------------------------------------------------------------------------*/
+capture putdocx clear
+putdocx begin
+
+* Add title page
+putdocx paragraph, style(Title)
+putdocx text ("Extended Analysis Results")
+putdocx paragraph, style(Subtitle)
+putdocx text ("Alternative Specifications and SCDi Implementation")
+putdocx paragraph
+putdocx text ("Generated: `c(current_date)' `c(current_time)'")
+putdocx pagebreak
+
 /*==============================================================================
   PART 1: DATA SETUP AND VARIABLE DEFINITIONS
 ==============================================================================*/
@@ -252,18 +267,45 @@ display _newline
 display "2.4 COMPARISON OF SPECIFICATIONS"
 display "────────────────────────────────────────────────────────────────"
 
-esttab orig_ols alt1_ols forward1_ols using "$tables/specification_comparison.csv", ///
+* Save to RTF (opens in Word)
+esttab orig_ols alt1_ols forward1_ols using "$tables/specification_comparison.rtf", ///
     replace b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
     mtitles("Original (DV=change)" "Standard AR(1)" "Forward (DV=t+1)") ///
     stats(N r2, fmt(0 3)) ///
-    title("Comparison of Violence Specifications")
+    title("Table 1: Comparison of Violence Specifications")
+
+* Add to consolidated Word document
+putdocx paragraph, style(Heading1)
+putdocx text ("Part 2: Alternative Regression Specifications")
+putdocx paragraph, style(Heading2)
+putdocx text ("Table 1: Comparison of Violence Specifications")
+putdocx paragraph
+putdocx text ("This table compares three DV specifications: original (violence change), ")
+putdocx text ("standard AR(1), and forward-looking (violence at t+1).")
+putdocx paragraph
+
+* Create table for Word doc
+esttab orig_ols alt1_ols forward1_ols, ///
+    b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
+    mtitles("Original (DV=change)" "Standard AR(1)" "Forward (DV=t+1)") ///
+    stats(N r2, fmt(0 3))
+
+* Interaction models table
+putdocx paragraph, style(Heading2)
+putdocx text ("Table 2: Interaction Models Comparison")
+esttab orig_interact alt2_interact forward2_interact using "$tables/specification_interact.rtf", ///
+    replace b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
+    mtitles("Original" "Standard AR(1)" "Forward") ///
+    stats(N r2, fmt(0 3)) ///
+    title("Table 2: Interaction Models Comparison")
 
 esttab orig_interact alt2_interact forward2_interact, ///
     b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
     mtitles("Original" "Standard AR(1)" "Forward") ///
     stats(N r2, fmt(0 3))
 
-display "✓ Alternative specifications estimated and saved"
+putdocx pagebreak
+display "✓ Alternative specifications estimated and saved to RTF"
 
 /*==============================================================================
   PART 3: MODEL SPECIFICATION CHECKS
@@ -690,15 +732,31 @@ foreach def in hotspot hotspot_strict hotspot_loose hotspot_events {
     }
 }
 
-* Export results (capture in case some models weren't estimated)
+* Export results to RTF (capture in case some models weren't estimated)
 capture noisily esttab rob_hotspot rob_hotspot_strict rob_hotspot_loose rob_hotspot_events ///
-    using "$tables/robustness_hotspot_definitions.csv", replace ///
+    using "$tables/robustness_hotspot_definitions.rtf", replace ///
     b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
     mtitles("Baseline (2/3)" "Strict (10%)" "Loose (33%)" "Events") ///
-    stats(N r2, fmt(0 3))
+    stats(N r2, fmt(0 3)) ///
+    title("Table 3: Robustness - Alternative Hotspot Definitions")
 
 if _rc != 0 {
     display "Note: Some models could not be exported - check which estimates exist"
+}
+else {
+    * Add to consolidated Word document
+    putdocx paragraph, style(Heading1)
+    putdocx text ("Part 4: Robustness Checks")
+    putdocx paragraph, style(Heading2)
+    putdocx text ("Table 3: Alternative Hotspot Definitions")
+    putdocx paragraph
+    putdocx text ("Comparing different hotspot classification thresholds.")
+    putdocx paragraph
+
+    capture noisily esttab rob_hotspot rob_hotspot_strict rob_hotspot_loose rob_hotspot_events, ///
+        b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
+        mtitles("Baseline (2/3)" "Strict (10%)" "Loose (33%)" "Events") ///
+        stats(N r2, fmt(0 3))
 }
 
 /*------------------------------------------------------------------------------
@@ -735,7 +793,21 @@ estimates store lag_cum
 test 1.hotspot#c.protest_cumulative
 display "Cumulative (3-month) lag: interaction p = " %5.3f r(p)
 
-esttab lag1 lag2 lag3 lag_cum using "$tables/robustness_lag_structures.csv", replace ///
+* Export to RTF
+esttab lag1 lag2 lag3 lag_cum using "$tables/robustness_lag_structures.rtf", replace ///
+    b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
+    mtitles("1-month" "2-month" "3-month" "Cumulative") ///
+    stats(N r2, fmt(0 3)) ///
+    title("Table 4: Robustness - Different Lag Structures")
+
+* Add to consolidated Word document
+putdocx paragraph, style(Heading2)
+putdocx text ("Table 4: Different Lag Structures")
+putdocx paragraph
+putdocx text ("Testing protest effects at different time lags.")
+putdocx paragraph
+
+esttab lag1 lag2 lag3 lag_cum, ///
     b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
     mtitles("1-month" "2-month" "3-month" "Cumulative") ///
     stats(N r2, fmt(0 3))
@@ -1119,8 +1191,24 @@ capture {
 
 * Compare models (only if all estimated successfully)
 capture {
+    * Export to RTF
     esttab model_hotspot model_scdi_int model_scdi_clust using ///
-        "$tables/hotspot_vs_scdi.csv", replace ///
+        "$tables/hotspot_vs_scdi.rtf", replace ///
+        b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
+        mtitles("Your Hotspot" "SCDi Intensity" "SCDi Clustering") ///
+        stats(N r2, fmt(0 3)) ///
+        title("Table 5: Hotspot vs SCDi Comparison")
+
+    * Add to consolidated Word document
+    putdocx paragraph, style(Heading1)
+    putdocx text ("Part 6: Comparison of Clustering Measures")
+    putdocx paragraph, style(Heading2)
+    putdocx text ("Table 5: Hotspot vs SCDi Comparison")
+    putdocx paragraph
+    putdocx text ("Comparing your hotspot measure with Walther et al. SCDi measures.")
+    putdocx paragraph
+
+    esttab model_hotspot model_scdi_int model_scdi_clust, ///
         b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
         mtitles("Your Hotspot" "SCDi Intensity" "SCDi Clustering") ///
         stats(N r2, fmt(0 3))
@@ -1164,10 +1252,31 @@ display "   Conflict Concentration calculated (centroid-based)"
 display "   4-category typology created"
 display ""
 display "OUTPUTS SAVED:"
-display "   $tables/specification_comparison.csv"
-display "   $tables/robustness_hotspot_definitions.csv"
-display "   $tables/robustness_lag_structures.csv"
-display "   $tables/hotspot_vs_scdi.csv"
+display "   RTF Tables (open in Word):"
+display "      $tables/specification_comparison.rtf"
+display "      $tables/specification_interact.rtf"
+display "      $tables/robustness_hotspot_definitions.rtf"
+display "      $tables/robustness_lag_structures.rtf"
+display "      $tables/hotspot_vs_scdi.rtf"
+display ""
+display "   Consolidated Word Document:"
+display "      $tables/extended_analysis_tables.docx"
+
+* Save consolidated Word document
+putdocx paragraph, style(Heading1)
+putdocx text ("End of Analysis")
+putdocx paragraph
+putdocx text ("Analysis completed on `c(current_date)' at `c(current_time)'")
+
+capture noisily putdocx save "$tables/extended_analysis_tables.docx", replace
+if _rc == 0 {
+    display ""
+    display "✓ Consolidated Word document saved: $tables/extended_analysis_tables.docx"
+}
+else {
+    display ""
+    display "⚠ Warning: Could not save Word document (error " _rc ")"
+}
 
 * Save enhanced dataset
 capture noisily save "$merged/analysis_data_extended.dta", replace
