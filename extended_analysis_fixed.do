@@ -68,6 +68,116 @@ putdocx paragraph
 putdocx text ("Generated: `c(current_date)' `c(current_time)'")
 putdocx pagebreak
 
+/*------------------------------------------------------------------------------
+  Helper Program: Create putdocx table from stored estimates
+
+  This program uses esttab to create a temporary RTF file, then reads
+  the table content and inserts a simplified matrix into putdocx.
+
+  Uses estimates table to create a matrix that putdocx can handle.
+------------------------------------------------------------------------------*/
+capture program drop estimates_to_docx
+program define estimates_to_docx
+    syntax namelist, title(string) [subtitle(string)]
+
+    * Add section heading
+    putdocx paragraph, style(Heading2)
+    putdocx text ("`title'")
+    if "`subtitle'" != "" {
+        putdocx paragraph
+        putdocx text ("`subtitle'")
+    }
+    putdocx paragraph
+
+    * Use estimates table to create a matrix
+    * This handles factor variables properly
+    capture estimates table `namelist', b(%9.3f) se(%9.3f) stats(N r2)
+    if _rc != 0 {
+        putdocx text ("Table could not be generated - see RTF output file.")
+        exit
+    }
+
+    * Get the table as a matrix using esttab's cells option
+    * Create a temporary file for the matrix
+    tempfile temp_matrix
+    tempname results
+
+    * Build matrix from each estimate
+    local n_models : word count `namelist'
+    local first_model : word 1 of `namelist'
+
+    * Restore first model to get dimensions
+    estimates restore `first_model'
+    local n_coefs = e(rank)
+    if `n_coefs' == 0 | `n_coefs' == . local n_coefs = colsof(e(b))
+
+    * Create results matrix: coefficients + N + R2 rows
+    local n_rows = `n_coefs' + 2
+    matrix `results' = J(`n_rows', `n_models', .)
+
+    * Fill matrix with coefficients, N, and R2 for each model
+    local col = 1
+    foreach est of local namelist {
+        capture estimates restore `est'
+        if _rc != 0 {
+            local col = `col' + 1
+            continue
+        }
+
+        * Get coefficient vector
+        matrix b = e(b)
+        local n_this = colsof(b)
+
+        * Fill in coefficients
+        forvalues i = 1/`n_this' {
+            if `i' <= `n_coefs' {
+                matrix `results'[`i', `col'] = b[1, `i']
+            }
+        }
+
+        * Add N and R2 in last two rows
+        matrix `results'[`n_coefs' + 1, `col'] = e(N)
+        local r2 = e(r2)
+        if "`r2'" != "" & `r2' != . {
+            matrix `results'[`n_coefs' + 2, `col'] = `r2'
+        }
+
+        local col = `col' + 1
+    }
+
+    * Set column names to model names
+    matrix colnames `results' = `namelist'
+
+    * Set row names from first model's coefficient names + N + R2
+    estimates restore `first_model'
+    local coefnames : colnames e(b)
+    local rownames ""
+    foreach name of local coefnames {
+        * Simplify variable names for display (remove factor notation)
+        local clean = subinstr("`name'", "1.", "", 1)
+        local clean = subinstr("`clean'", "0.", "", 1)
+        local clean = subinstr("`clean'", "#c.", "×", 1)
+        local clean = subinstr("`clean'", "#", "×", 1)
+        local rownames "`rownames' `clean'"
+    }
+    local rownames "`rownames' N R2"
+    matrix rownames `results' = `rownames'
+
+    * Insert the matrix as a table
+    putdocx table tbl_`=int(runiform()*10000)' = matrix(`results'), ///
+        nformat(%9.3f) ///
+        border(all, nil) ///
+        border(top, single) ///
+        border(bottom, single) ///
+        headerrow(1)
+
+    * Add note about significance
+    putdocx paragraph
+    putdocx text ("Note: See RTF files for standard errors and significance stars."), italic
+    putdocx paragraph
+
+end
+
 /*==============================================================================
   PART 1: DATA SETUP AND VARIABLE DEFINITIONS
 ==============================================================================*/
@@ -274,38 +384,33 @@ esttab orig_ols alt1_ols forward1_ols using "$tables/specification_comparison.rt
     stats(N r2, fmt(0 3)) ///
     title("Table 1: Comparison of Violence Specifications")
 
-* Add to consolidated Word document
+* Add to consolidated Word document with actual table
 putdocx paragraph, style(Heading1)
 putdocx text ("Part 2: Alternative Regression Specifications")
-putdocx paragraph, style(Heading2)
-putdocx text ("Table 1: Comparison of Violence Specifications")
 putdocx paragraph
-putdocx text ("This table compares three DV specifications: original (violence change), ")
+putdocx text ("This section compares three DV specifications: original (violence change), ")
 putdocx text ("standard AR(1), and forward-looking (violence at t+1).")
 putdocx paragraph
 
-* Create table for Word doc
-esttab orig_ols alt1_ols forward1_ols, ///
-    b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
-    mtitles("Original (DV=change)" "Standard AR(1)" "Forward (DV=t+1)") ///
-    stats(N r2, fmt(0 3))
+* Create matrix for Table 1 and insert into Word doc
+estimates_to_docx orig_ols alt1_ols forward1_ols, ///
+    title("Table 1: Comparison of Violence Specifications") ///
+    subtitle("Models: Original (DV=change), Standard AR(1), Forward (DV=t+1)")
 
-* Interaction models table
-putdocx paragraph, style(Heading2)
-putdocx text ("Table 2: Interaction Models Comparison")
+* Interaction models - save to RTF
 esttab orig_interact alt2_interact forward2_interact using "$tables/specification_interact.rtf", ///
     replace b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
     mtitles("Original" "Standard AR(1)" "Forward") ///
     stats(N r2, fmt(0 3)) ///
     title("Table 2: Interaction Models Comparison")
 
-esttab orig_interact alt2_interact forward2_interact, ///
-    b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
-    mtitles("Original" "Standard AR(1)" "Forward") ///
-    stats(N r2, fmt(0 3))
+* Insert interaction models table into Word doc
+estimates_to_docx orig_interact alt2_interact forward2_interact, ///
+    title("Table 2: Interaction Models Comparison") ///
+    subtitle("Models with hotspot interaction effects")
 
 putdocx pagebreak
-display "✓ Alternative specifications estimated and saved to RTF"
+display "✓ Alternative specifications estimated and saved to RTF and DOCX"
 
 /*==============================================================================
   PART 3: MODEL SPECIFICATION CHECKS
@@ -655,6 +760,53 @@ restore
 * Clean up temporary variables
 capture drop resid resid_group_mean resid_deviation n_in_group resid_others_mean
 
+* Add Part 3 summary to Word document
+putdocx paragraph, style(Heading1)
+putdocx text ("Part 3: Model Specification Checks")
+putdocx paragraph
+putdocx text ("This section presents diagnostic tests for model specification.")
+putdocx paragraph, style(Heading2)
+putdocx text ("3.1 Overdispersion Test")
+putdocx paragraph
+
+* Format dispersion ratio as string
+local disp_str : display %6.2f `v_dispersion'
+if "`v_dispersion'" != "" & "`v_dispersion'" != "." {
+    putdocx text ("Dispersion ratio (Var/Mean): `disp_str'")
+}
+else {
+    putdocx text ("Dispersion ratio: See log file for details.")
+}
+putdocx paragraph
+putdocx text ("A ratio > 1.5 suggests overdispersion, recommending negative binomial regression.")
+putdocx paragraph, style(Heading2)
+putdocx text ("3.2 Zero-Inflation Check")
+putdocx paragraph
+
+* Format zero percentage as string
+local zero_str : display %4.1f `pct_zeros'
+if "`pct_zeros'" != "" & "`pct_zeros'" != "." {
+    putdocx text ("Percentage of zero observations: `zero_str'%")
+}
+else {
+    putdocx text ("Zero proportion: See log file for details.")
+}
+putdocx paragraph, style(Heading2)
+putdocx text ("3.3 Spatial Autocorrelation")
+putdocx paragraph
+
+* Format Moran's I as string
+local moran_str : display %5.3f `moran_approx'
+if "`moran_approx'" != "" & "`moran_approx'" != "." {
+    putdocx text ("Approximate spatial correlation of residuals: `moran_str'")
+}
+else {
+    putdocx text ("Spatial correlation: See log file for details.")
+}
+putdocx paragraph
+putdocx text ("Values > 0.1 suggest spatial dependence in residuals.")
+putdocx pagebreak
+
 /*==============================================================================
   PART 4: ROBUSTNESS CHECKS
 ==============================================================================*/
@@ -740,23 +892,22 @@ capture noisily esttab rob_hotspot rob_hotspot_strict rob_hotspot_loose rob_hots
     stats(N r2, fmt(0 3)) ///
     title("Table 3: Robustness - Alternative Hotspot Definitions")
 
-if _rc != 0 {
-    display "Note: Some models could not be exported - check which estimates exist"
-}
-else {
-    * Add to consolidated Word document
-    putdocx paragraph, style(Heading1)
-    putdocx text ("Part 4: Robustness Checks")
-    putdocx paragraph, style(Heading2)
-    putdocx text ("Table 3: Alternative Hotspot Definitions")
-    putdocx paragraph
-    putdocx text ("Comparing different hotspot classification thresholds.")
-    putdocx paragraph
+* Add to consolidated Word document with actual table
+putdocx paragraph, style(Heading1)
+putdocx text ("Part 4: Robustness Checks")
+putdocx paragraph
+putdocx text ("Comparing different hotspot classification thresholds.")
+putdocx paragraph
 
-    capture noisily esttab rob_hotspot rob_hotspot_strict rob_hotspot_loose rob_hotspot_events, ///
-        b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
-        mtitles("Baseline (2/3)" "Strict (10%)" "Loose (33%)" "Events") ///
-        stats(N r2, fmt(0 3))
+* Insert table - use capture since some models may not exist
+capture noisily estimates_to_docx rob_hotspot rob_hotspot_strict rob_hotspot_loose rob_hotspot_events, ///
+    title("Table 3: Alternative Hotspot Definitions") ///
+    subtitle("Baseline (2/3 criteria), Strict (top 10%), Loose (top 33%), Events-based")
+
+if _rc != 0 {
+    putdocx paragraph
+    putdocx text ("Note: Some hotspot definition models could not be estimated due to insufficient variation.")
+    putdocx paragraph
 }
 
 /*------------------------------------------------------------------------------
@@ -800,17 +951,12 @@ esttab lag1 lag2 lag3 lag_cum using "$tables/robustness_lag_structures.rtf", rep
     stats(N r2, fmt(0 3)) ///
     title("Table 4: Robustness - Different Lag Structures")
 
-* Add to consolidated Word document
-putdocx paragraph, style(Heading2)
-putdocx text ("Table 4: Different Lag Structures")
-putdocx paragraph
-putdocx text ("Testing protest effects at different time lags.")
-putdocx paragraph
+* Add to consolidated Word document with actual table
+estimates_to_docx lag1 lag2 lag3 lag_cum, ///
+    title("Table 4: Different Lag Structures") ///
+    subtitle("Testing protest effects at 1-month, 2-month, 3-month, and cumulative lags")
 
-esttab lag1 lag2 lag3 lag_cum, ///
-    b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
-    mtitles("1-month" "2-month" "3-month" "Cumulative") ///
-    stats(N r2, fmt(0 3))
+putdocx pagebreak
 
 /*------------------------------------------------------------------------------
   4.3 Country-by-Country Analysis
@@ -1083,6 +1229,34 @@ label variable scdi_type "SCDi Typology (Walther et al.)"
 tabulate scdi_type, missing
 tabulate scdi_type country, row nofreq
 
+* Add SCDi summary to Word document
+putdocx paragraph, style(Heading1)
+putdocx text ("Part 5: Walther et al. (2023) SCDi Implementation")
+putdocx paragraph
+putdocx text ("The Spatial Conflict Dynamics indicator (SCDi) classifies conflict-affected areas ")
+putdocx text ("based on two dimensions: intensity (high/low) and spatial concentration (clustered/dispersed).")
+putdocx paragraph, style(Heading2)
+putdocx text ("SCDi Typology Distribution")
+putdocx paragraph
+putdocx text ("Type 1: High intensity + Clustered (concentrated hotspots)")
+putdocx paragraph
+putdocx text ("Type 2: High intensity + Dispersed (widespread violence)")
+putdocx paragraph
+putdocx text ("Type 3: Low intensity + Clustered (localized low-level conflict)")
+putdocx paragraph
+putdocx text ("Type 4: Low intensity + Dispersed (diffuse low-level conflict)")
+putdocx paragraph
+
+* Create matrix with SCDi type counts
+capture {
+    quietly tabulate scdi_type, matcell(scdi_counts)
+    matrix rownames scdi_counts = "High-Clustered" "High-Dispersed" "Low-Clustered" "Low-Dispersed"
+    matrix colnames scdi_counts = "Observations"
+    putdocx table scdi_tbl = matrix(scdi_counts), border(all, nil) border(top, single) border(bottom, single)
+}
+
+putdocx pagebreak
+
 /*==============================================================================
   PART 6: COMPARISON OF CLUSTERING MEASURES
 ==============================================================================*/
@@ -1190,28 +1364,29 @@ capture {
 }
 
 * Compare models (only if all estimated successfully)
-capture {
-    * Export to RTF
-    esttab model_hotspot model_scdi_int model_scdi_clust using ///
-        "$tables/hotspot_vs_scdi.rtf", replace ///
-        b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
-        mtitles("Your Hotspot" "SCDi Intensity" "SCDi Clustering") ///
-        stats(N r2, fmt(0 3)) ///
-        title("Table 5: Hotspot vs SCDi Comparison")
+* Export to RTF
+capture noisily esttab model_hotspot model_scdi_int model_scdi_clust using ///
+    "$tables/hotspot_vs_scdi.rtf", replace ///
+    b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
+    mtitles("Your Hotspot" "SCDi Intensity" "SCDi Clustering") ///
+    stats(N r2, fmt(0 3)) ///
+    title("Table 5: Hotspot vs SCDi Comparison")
 
-    * Add to consolidated Word document
-    putdocx paragraph, style(Heading1)
-    putdocx text ("Part 6: Comparison of Clustering Measures")
-    putdocx paragraph, style(Heading2)
-    putdocx text ("Table 5: Hotspot vs SCDi Comparison")
-    putdocx paragraph
-    putdocx text ("Comparing your hotspot measure with Walther et al. SCDi measures.")
-    putdocx paragraph
+* Add to consolidated Word document with actual table
+putdocx paragraph, style(Heading1)
+putdocx text ("Part 6: Comparison of Clustering Measures")
+putdocx paragraph
+putdocx text ("Comparing your hotspot measure with Walther et al. SCDi measures.")
+putdocx paragraph
 
-    esttab model_hotspot model_scdi_int model_scdi_clust, ///
-        b(3) se(3) star(* 0.1 ** 0.05 *** 0.01) ///
-        mtitles("Your Hotspot" "SCDi Intensity" "SCDi Clustering") ///
-        stats(N r2, fmt(0 3))
+capture noisily estimates_to_docx model_hotspot model_scdi_int model_scdi_clust, ///
+    title("Table 5: Hotspot vs SCDi Comparison") ///
+    subtitle("Your Hotspot measure vs SCDi Intensity and Clustering")
+
+if _rc != 0 {
+    putdocx paragraph
+    putdocx text ("Note: Some SCDi comparison models could not be estimated.")
+    putdocx paragraph
 }
 
 /*==============================================================================
