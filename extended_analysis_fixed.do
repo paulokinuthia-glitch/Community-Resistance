@@ -757,20 +757,25 @@ foreach c of local countries {
         if country == "`c'"
 
     if _rc == 0 {
-        estimates store country_`=subinstr("`c'"," ","_",.)'
+        * Check if we can store estimates (name might have special characters)
+        local clean_name = subinstr("`c'"," ","_",.)
+        local clean_name = subinstr("`clean_name'",",","",.)
+        local clean_name = subinstr("`clean_name'","'","",.)
+        capture estimates store country_`clean_name'
 
-        test 1.hotspot#c.protest_lag1
-        if r(p) != . {
+        * Test interaction - wrap in capture since it may not exist
+        capture test 1.hotspot#c.protest_lag1
+        if _rc == 0 & r(p) != . {
             display "  Interaction p = " %5.3f r(p)
         }
         else {
-            display "  Interaction test not available (insufficient variation)"
+            display "  Interaction test not available (insufficient variation in hotspot)"
         }
 
         display "  N = " e(N) ", R2 = " %5.3f e(r2)
     }
     else {
-        display "  Model failed to converge"
+        display "  Model failed to converge or insufficient data"
     }
 }
 
