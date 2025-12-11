@@ -677,6 +677,63 @@ restore
 * Clean up temporary variables
 capture drop resid resid_group_mean resid_deviation n_in_group resid_others_mean
 
+/*------------------------------------------------------------------------------
+  3.5 Output Model Specification Comparison Tables
+------------------------------------------------------------------------------*/
+
+display _newline
+display "3.5 MODEL SPECIFICATION COMPARISON TABLES"
+display "────────────────────────────────────────────────────────────────"
+
+* Output Poisson vs Negative Binomial comparison table
+* Check which models are available
+local model_list ""
+capture estimates dir pois_model
+if _rc == 0 {
+    local model_list "`model_list' pois_model"
+}
+capture estimates dir nbreg_model
+if _rc == 0 {
+    local model_list "`model_list' nbreg_model"
+}
+capture estimates dir nbreg_interact
+if _rc == 0 {
+    local model_list "`model_list' nbreg_interact"
+}
+capture estimates dir pois_robust
+if _rc == 0 {
+    local model_list "`model_list' pois_robust"
+}
+capture estimates dir zinb_model
+if _rc == 0 {
+    local model_list "`model_list' zinb_model"
+}
+
+* Output table if we have models to compare
+if "`model_list'" != "" {
+    display "Outputting model comparison table with:`model_list'"
+
+    capture noisily esttab `model_list' using "$tables/model_specification_comparison.rtf", ///
+        replace ///
+        title("Table: Model Specification Comparison") ///
+        mtitles("Poisson" "Neg.Binomial" "NB w/Interact" "Poisson Robust" "ZINB") ///
+        star(* 0.10 ** 0.05 *** 0.01) ///
+        se(%9.3f) b(%9.4f) ///
+        scalars("N Observations" "ll Log-likelihood" "aic AIC" "bic BIC") ///
+        note("Standard errors in parentheses. * p<0.10, ** p<0.05, *** p<0.01") ///
+        label compress nogaps
+
+    if _rc == 0 {
+        display "✓ Model specification table saved to: model_specification_comparison.rtf"
+    }
+    else {
+        display "Note: Could not create RTF table (rc = " _rc ")"
+    }
+}
+else {
+    display "Warning: No models available for comparison table"
+}
+
 * Add Part 3 summary to Word document
 putdocx paragraph, style(Heading1)
 putdocx text ("Part 3: Model Specification Checks")
@@ -722,6 +779,19 @@ else {
 }
 putdocx paragraph
 putdocx text ("Values > 0.1 suggest spatial dependence in residuals.")
+
+putdocx paragraph, style(Heading2)
+putdocx text ("3.4 Model Specification Comparison Table")
+putdocx paragraph
+putdocx text ("The table below compares Poisson, Negative Binomial, and Zero-Inflated models.")
+putdocx paragraph
+putdocx text ("See file: model_specification_comparison.rtf for the full comparison table with:")
+putdocx paragraph
+putdocx text ("  - Coefficient estimates and standard errors")
+putdocx paragraph
+putdocx text ("  - Log-likelihood values for model comparison")
+putdocx paragraph
+putdocx text ("  - AIC/BIC for model selection")
 putdocx pagebreak
 
 /*==============================================================================
