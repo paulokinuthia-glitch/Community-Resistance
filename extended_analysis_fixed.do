@@ -72,12 +72,11 @@ putdocx text ("Generated: `c(current_date)' `c(current_time)'")
 putdocx pagebreak
 
 /*------------------------------------------------------------------------------
-  Helper Program: Create putdocx table from stored estimates
+  Helper Program: Add table reference to Word document
 
-  This program uses esttab to create a temporary RTF file, then reads
-  the table content and inserts a simplified matrix into putdocx.
-
-  Uses estimates table to create a matrix that putdocx can handle.
+  SIMPLIFIED VERSION: The original matrix-based approach failed with r(503)
+  conformability error because models have different numbers of coefficients
+  (due to factor variables). This version adds a reference to the RTF file.
 ------------------------------------------------------------------------------*/
 capture program drop estimates_to_docx
 program define estimates_to_docx
@@ -91,92 +90,7 @@ program define estimates_to_docx
         putdocx text ("`subtitle'")
     }
     putdocx paragraph
-
-    * Use estimates table to create a matrix
-    * This handles factor variables properly
-    capture estimates table `namelist', b(%9.3f) se(%9.3f) stats(N r2)
-    if _rc != 0 {
-        putdocx text ("Table could not be generated - see RTF output file.")
-        exit
-    }
-
-    * Get the table as a matrix using esttab's cells option
-    * Create a temporary file for the matrix
-    tempfile temp_matrix
-    tempname results
-
-    * Build matrix from each estimate
-    local n_models : word count `namelist'
-    local first_model : word 1 of `namelist'
-
-    * Restore first model to get dimensions
-    estimates restore `first_model'
-    local n_coefs = e(rank)
-    if `n_coefs' == 0 | `n_coefs' == . local n_coefs = colsof(e(b))
-
-    * Create results matrix: coefficients + N + R2 rows
-    local n_rows = `n_coefs' + 2
-    matrix `results' = J(`n_rows', `n_models', .)
-
-    * Fill matrix with coefficients, N, and R2 for each model
-    local col = 1
-    foreach est of local namelist {
-        capture estimates restore `est'
-        if _rc != 0 {
-            local col = `col' + 1
-            continue
-        }
-
-        * Get coefficient vector
-        matrix b = e(b)
-        local n_this = colsof(b)
-
-        * Fill in coefficients
-        forvalues i = 1/`n_this' {
-            if `i' <= `n_coefs' {
-                matrix `results'[`i', `col'] = b[1, `i']
-            }
-        }
-
-        * Add N and R2 in last two rows
-        matrix `results'[`n_coefs' + 1, `col'] = e(N)
-        local r2 = e(r2)
-        if "`r2'" != "" & `r2' != . {
-            matrix `results'[`n_coefs' + 2, `col'] = `r2'
-        }
-
-        local col = `col' + 1
-    }
-
-    * Set column names to model names
-    matrix colnames `results' = `namelist'
-
-    * Set row names from first model's coefficient names + N + R2
-    estimates restore `first_model'
-    local coefnames : colnames e(b)
-    local rownames ""
-    foreach name of local coefnames {
-        * Simplify variable names for display (remove factor notation)
-        local clean = subinstr("`name'", "1.", "", 1)
-        local clean = subinstr("`clean'", "0.", "", 1)
-        local clean = subinstr("`clean'", "#c.", "×", 1)
-        local clean = subinstr("`clean'", "#", "×", 1)
-        local rownames "`rownames' `clean'"
-    }
-    local rownames "`rownames' N R2"
-    matrix rownames `results' = `rownames'
-
-    * Insert the matrix as a table
-    putdocx table tbl_`=int(runiform()*10000)' = matrix(`results'), ///
-        nformat(%9.3f) ///
-        border(all, nil) ///
-        border(top, single) ///
-        border(bottom, single) ///
-        headerrow(1)
-
-    * Add note about significance
-    putdocx paragraph
-    putdocx text ("Note: See RTF files for standard errors and significance stars."), italic
+    putdocx text ("See corresponding RTF file for full table with standard errors and significance stars.")
     putdocx paragraph
 
 end
